@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Playora",
+    "slug": "playora",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "playora",
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "@react-native-google-signin/google-signin"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "android": {
+      "package": "com.aondigicon.playora"
+    },
+    "ios": {
+      "bundleIdentifier": "com.aondigicon.playora"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "54e2b2a1-e32b-4889-91e3-a3a52ddb4b00"
+      }
+    },
+    "owner": "rahulbhattacharya93"
+  }
+}
