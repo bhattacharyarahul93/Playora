@@ -13,6 +13,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 
 import { useRouter } from "expo-router";
+
 import { getAllProgress, saveGameProgress } from "../../src/services/storage";
 
 type GameState = "ready" | "playing" | "gameOver";
@@ -1711,6 +1712,8 @@ type Bubble = {
   color: string;
 
   y: Animated.Value;
+
+  scale: Animated.Value;
 };
 
 function shuffle<T>(items: T[]): T[] {
@@ -1767,6 +1770,7 @@ function makeBubbles(target: ElementData, fieldWidth: number): Bubble[] {
       color: BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)],
 
       y: new Animated.Value(-70 - Math.random() * 100),
+      scale: new Animated.Value(0.72),
     };
   });
 }
@@ -1809,6 +1813,7 @@ export default function PeriodicTableGame() {
       .then((allProgress) => {
         if (mounted) setBestScore(allProgress["periodic-table"].highScore);
       })
+
       .catch(() => {});
 
     return () => {
@@ -1836,24 +1841,34 @@ export default function PeriodicTableGame() {
     stopAnimations();
 
     const finalScore = scoreRef.current;
+
     const earnedStars = Math.min(3, Math.floor(finalScore / 100));
+
     const reachedLevel = Math.max(1, Math.floor(finalScore / 100) + 1);
 
     getAllProgress()
       .then(async (allProgress) => {
         const previous = allProgress["periodic-table"];
+
         await saveGameProgress("periodic-table", {
           ...previous,
+
           highScore: Math.max(previous.highScore, finalScore),
+
           currentLevel: Math.max(previous.currentLevel, reachedLevel),
+
           unlockedLevels: Math.max(
             previous.unlockedLevels,
+
             Math.min(10, reachedLevel + 1),
           ),
+
           stars: Math.max(previous.stars, earnedStars),
         });
+
         setBestScore((current) => Math.max(current, finalScore));
       })
+
       .catch((error) => {
         console.warn("Unable to save Periodic Table progress:", error);
       });
@@ -1903,13 +1918,22 @@ export default function PeriodicTableGame() {
     if (gameState !== "playing" || bubbles.length !== 4) return;
 
     const animations = bubbles.map((bubble, index) =>
-      Animated.timing(bubble.y, {
-        toValue: Math.max(0, fieldHeight - bubbleSize - 44),
-
-        duration: 6500 + index * 420 + Math.random() * 1200,
-
-        useNativeDriver: true,
-      }),
+      Animated.parallel([
+        // Animate top position on JS so Android touch targets follow the visible bubbles.
+        Animated.timing(bubble.y, {
+          toValue: Math.max(0, fieldHeight - bubbleSize - 44),
+          duration: 6500 + index * 420 + Math.random() * 1200,
+          useNativeDriver: false,
+        }),
+        Animated.spring(bubble.scale, {
+          toValue: 1,
+          friction: 6,
+          tension: 95,
+          // Keep this JS-driven too: the same animated view uses `top` for
+          // falling, and native-driven transforms cannot be mixed with it.
+          useNativeDriver: false,
+        }),
+      ]),
     );
 
     animationRef.current = animations;
@@ -2103,17 +2127,29 @@ export default function PeriodicTableGame() {
 
                   {
                     left: bubble.x,
-
+                    top: bubble.y,
                     width: bubbleSize,
-
                     height: bubbleSize,
-
-                    transform: [{ translateY: bubble.y }],
+                    transform: [{ scale: bubble.scale }],
                   },
                 ]}
               >
                 <Pressable
+                  collapsable={false}
+                  hitSlop={14}
+                  pressRetentionOffset={{
+                    top: 18,
+                    right: 18,
+                    bottom: 18,
+                    left: 18,
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Choose ${bubble.symbol}`}
                   onPress={() => chooseBubble(bubble)}
+                  android_ripple={{
+                    color: "rgba(255,255,255,0.28)",
+                    borderless: false,
+                  }}
                   style={({ pressed }) => [
                     styles.bubble,
 
@@ -2520,7 +2556,13 @@ const styles = StyleSheet.create({
     position: "relative",
   },
 
-  bubblePosition: { position: "absolute", top: 0, alignItems: "center" },
+  bubblePosition: {
+    position: "absolute",
+    left: 0,
+    alignItems: "center",
+    zIndex: 3,
+    elevation: 8,
+  },
 
   bubble: {
     alignItems: "center",
@@ -2542,7 +2584,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
   },
 
-  bubblePressed: { transform: [{ scale: 0.9 }] },
+  bubblePressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.92 }],
+    borderColor: "#FFFFFF",
+  },
 
   bubbleText: {
     color: "#FFFFFF",

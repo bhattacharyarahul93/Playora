@@ -358,22 +358,19 @@ export default function TicTacToeScreen() {
       clearTimeout(completionTimerRef.current);
       completionTimerRef.current = null;
     }
+
     const nextRound = roundNumber + 1;
-    const nextDifficulty = DIFFICULTIES[(nextRound - 1) % DIFFICULTIES.length];
     const nextPlayerSymbol: SymbolType = nextRound % 2 === 1 ? "X" : "O";
+
     setRoundNumber(nextRound);
-    setDifficulty(nextDifficulty);
+    // Keep the difficulty selected by the player for every round.
     setPlayerSymbol(nextPlayerSymbol);
     setBoard([...EMPTY_BOARD]);
     setWinningLine([]);
     setPendingResult(null);
     setGameState("playing");
     setCurrentPlayer("X");
-    if (nextPlayerSymbol === "O") {
-      setComputerThinking(true);
-    } else {
-      setComputerThinking(false);
-    }
+    setComputerThinking(nextPlayerSymbol === "O");
   }, [roundNumber]);
   const prepareGame = useCallback(() => {
     setGameState("ready");
@@ -585,20 +582,67 @@ export default function TicTacToeScreen() {
           <Text style={styles.readyEmoji}>❌⭕</Text>
           <Text style={styles.readyHeading}>Ready to play?</Text>
           <Text style={styles.readyInfo}>
-            Beat the computer in Tic Tac Toe. Your X or O is randomly selected
-            every round!
+            Beat the computer in Tic Tac Toe. Choose your difficulty and play at
+            your own pace!
           </Text>
           <View style={styles.readyRules}>
             <Text style={styles.readyRule}>
               🎲 Your X/O is shuffled every round
             </Text>
-            <Text style={styles.readyRule}>
-              🧠 Computer difficulty changes each round
-            </Text>
-            <Text style={styles.readyRule}>🔁 Easy → Medium → Hard → Easy</Text>
             <Text style={styles.readyRule}>🏆 Three in a row wins</Text>
             <Text style={styles.readyRule}>⭐ Win = +100 points</Text>
           </View>
+
+          <Text style={styles.difficultyHeading}>CHOOSE YOUR DIFFICULTY</Text>
+          <View style={styles.difficultySelector}>
+            {DIFFICULTIES.map((level) => {
+              const selected = difficulty === level;
+              return (
+                <Pressable
+                  key={level}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => setDifficulty(level)}
+                  style={({ pressed }) => [
+                    styles.difficultyOption,
+                    selected && styles.difficultyOptionSelected,
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.difficultyOptionTitle,
+                      selected && styles.difficultyOptionTitleSelected,
+                    ]}
+                  >
+                    {level === "EASY"
+                      ? "🟢 EASY"
+                      : level === "MEDIUM"
+                        ? "🟡 MEDIUM"
+                        : "🔴 HARD"}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.difficultyOptionDescription,
+                      selected && styles.difficultyOptionDescriptionSelected,
+                    ]}
+                  >
+                    {level === "EASY"
+                      ? "Relaxed"
+                      : level === "MEDIUM"
+                        ? "Balanced"
+                        : "Expert"}
+                  </Text>
+                  {selected && (
+                    <Text style={styles.selectedLabel}>✓ SELECTED</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.selectedDifficultyInfo}>
+            {getDifficultyDescription(difficulty)}
+          </Text>
           <Pressable
             style={({ pressed }) => [
               styles.startButton,
@@ -671,6 +715,44 @@ export default function TicTacToeScreen() {
             <Text style={styles.symbolInfoText}>
               Computer: {computerSymbol}
             </Text>
+          </View>
+          <Text style={styles.completedDifficultyHeading}>
+            CHOOSE DIFFICULTY FOR NEXT ROUND
+          </Text>
+          <View style={styles.difficultySelector}>
+            {DIFFICULTIES.map((level) => {
+              const selected = difficulty === level;
+              return (
+                <Pressable
+                  key={level}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => setDifficulty(level)}
+                  style={({ pressed }) => [
+                    styles.difficultyOption,
+                    styles.completedDifficultyOption,
+                    selected && styles.difficultyOptionSelected,
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.difficultyOptionTitle,
+                      selected && styles.difficultyOptionTitleSelected,
+                    ]}
+                  >
+                    {level === "EASY"
+                      ? "🟢 EASY"
+                      : level === "MEDIUM"
+                        ? "🟡 MEDIUM"
+                        : "🔴 HARD"}
+                  </Text>
+                  {selected && (
+                    <Text style={styles.selectedLabel}>✓ SELECTED</Text>
+                  )}
+                </Pressable>
+              );
+            })}
           </View>
           <Pressable
             style={({ pressed }) => [
@@ -844,6 +926,81 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     marginVertical: 4,
+  },
+  difficultyHeading: {
+    width: "100%",
+    textAlign: "center",
+    marginTop: 16,
+    marginBottom: 9,
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#18242D",
+    letterSpacing: 0.7,
+  },
+  difficultySelector: {
+    width: "100%",
+    flexDirection: "row",
+    gap: 7,
+  },
+  difficultyOption: {
+    flex: 1,
+    minHeight: 76,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#E1E8E0",
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+  },
+  difficultyOptionSelected: {
+    borderColor: "#E85D04",
+    backgroundColor: "#FFF1E7",
+  },
+  difficultyOptionTitle: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#34434D",
+    textAlign: "center",
+  },
+  difficultyOptionTitleSelected: {
+    color: "#E85D04",
+  },
+  difficultyOptionDescription: {
+    fontSize: 10,
+    color: "#7A8790",
+    marginTop: 4,
+    textAlign: "center",
+  },
+  difficultyOptionDescriptionSelected: {
+    color: "#8C481D",
+  },
+  selectedLabel: {
+    fontSize: 8,
+    fontWeight: "900",
+    color: "#E85D04",
+    marginTop: 4,
+  },
+  selectedDifficultyInfo: {
+    fontSize: 10,
+    color: "#53635A",
+    textAlign: "center",
+    marginTop: 7,
+  },
+  completedDifficultyHeading: {
+    width: "100%",
+    textAlign: "center",
+    marginTop: 12,
+    marginBottom: 7,
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#18242D",
+    letterSpacing: 0.4,
+  },
+  completedDifficultyOption: {
+    minHeight: 46,
+    paddingVertical: 7,
   },
   startButton: {
     width: "100%",

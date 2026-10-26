@@ -5,8 +5,11 @@ import React, {
   useRef,
   useState,
 } from "react";
+
 import {
   Alert,
+  Animated,
+  Easing,
   PanResponder,
   Pressable,
   StatusBar,
@@ -15,16 +18,23 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { useRouter } from "expo-router";
+
 import { getAllProgress, saveGameProgress } from "../../src/services/storage";
 
 const SIZE = 6;
+
 const CELL_GAP = 4;
+
 const BEST_SCORE_KEY = "number-merge-best-score";
 
 type Board = number[][];
+
 type Direction = "left" | "right" | "up" | "down";
 
 const COLORS: Record<
@@ -32,23 +42,38 @@ const COLORS: Record<
   { backgroundColor: string; color: string; borderColor: string }
 > = {
   0: { backgroundColor: "#DCE4D7", color: "#DCE4D7", borderColor: "#DCE4D7" },
+
   2: { backgroundColor: "#FFF1D6", color: "#82613A", borderColor: "#FFE0A3" },
+
   4: { backgroundColor: "#FFE0B2", color: "#81501F", borderColor: "#FFC66F" },
+
   8: { backgroundColor: "#FFB66D", color: "#FFFFFF", borderColor: "#FF963D" },
+
   16: { backgroundColor: "#FF9366", color: "#FFFFFF", borderColor: "#FF7447" },
+
   32: { backgroundColor: "#FF737A", color: "#FFFFFF", borderColor: "#F84D5D" },
+
   64: { backgroundColor: "#F04F83", color: "#FFFFFF", borderColor: "#D93469" },
+
   128: { backgroundColor: "#B879F8", color: "#FFFFFF", borderColor: "#9C53E9" },
+
   256: { backgroundColor: "#9275FF", color: "#FFFFFF", borderColor: "#7555ED" },
+
   512: { backgroundColor: "#638BFF", color: "#FFFFFF", borderColor: "#4670EA" },
+
   1024: {
     backgroundColor: "#39BFE8",
+
     color: "#FFFFFF",
+
     borderColor: "#1CA2CE",
   },
+
   2048: {
     backgroundColor: "#35C98B",
+
     color: "#FFFFFF",
+
     borderColor: "#1EAA6F",
   },
 };
@@ -67,6 +92,7 @@ function createEmptyBoard(): Board {
 
 function addRandomTile(board: Board): Board {
   const next = board.map((row) => [...row]);
+
   const empty: { row: number; col: number }[] = [];
 
   for (let row = 0; row < SIZE; row++) {
@@ -78,7 +104,8 @@ function addRandomTile(board: Board): Board {
   if (empty.length === 0) return next;
 
   const position = empty[Math.floor(Math.random() * empty.length)];
-  next[position.row][position.col] = Math.random() < 0.9 ? 2 : 4;
+
+  next[position.row][position.col] = 2;
 
   return next;
 }
@@ -93,18 +120,25 @@ function boardsEqual(a: Board, b: Board): boolean {
 
 function moveLine(line: number[]) {
   const compacted = line.filter((value) => value !== 0);
+
   const result: number[] = [];
+
   let gained = 0;
+
   let i = 0;
 
   while (i < compacted.length) {
     if (i + 1 < compacted.length && compacted[i] === compacted[i + 1]) {
       const merged = compacted[i] * 2;
+
       result.push(merged);
+
       gained += merged;
+
       i += 2;
     } else {
       result.push(compacted[i]);
+
       i++;
     }
   }
@@ -114,42 +148,115 @@ function moveLine(line: number[]) {
   return { line: result, gained };
 }
 
-function moveBoard(board: Board, direction: Direction) {
+type TileMove = {
+  id: string;
+  value: number;
+  fromRow: number;
+  fromCol: number;
+  toRow: number;
+  toCol: number;
+  mergeSource: boolean;
+  mergedTarget: boolean;
+};
+
+function getMovePlan(board: Board, direction: Direction) {
   const next = createEmptyBoard();
+  const tiles: TileMove[] = [];
   let gained = 0;
 
-  for (let index = 0; index < SIZE; index++) {
-    let line: number[];
+  for (let lineIndex = 0; lineIndex < SIZE; lineIndex++) {
+    const entries: { value: number; row: number; col: number }[] = [];
 
-    if (direction === "left") {
-      line = [...board[index]];
-    } else if (direction === "right") {
-      line = [...board[index]].reverse();
-    } else if (direction === "up") {
-      line = board.map((row) => row[index]);
-    } else {
-      line = board.map((row) => row[index]).reverse();
+    for (let offset = 0; offset < SIZE; offset++) {
+      const row =
+        direction === "up"
+          ? offset
+          : direction === "down"
+            ? SIZE - 1 - offset
+            : lineIndex;
+      const col =
+        direction === "left"
+          ? offset
+          : direction === "right"
+            ? SIZE - 1 - offset
+            : lineIndex;
+      const value = board[row][col];
+      if (value !== 0) entries.push({ value, row, col });
     }
 
-    const result = moveLine(line);
-    gained += result.gained;
+    let sourceIndex = 0;
+    let targetOffset = 0;
 
-    let finalLine = result.line;
+    while (sourceIndex < entries.length) {
+      const firstTile = entries[sourceIndex];
+      const secondTile = entries[sourceIndex + 1];
+      const shouldMerge =
+        secondTile !== undefined && firstTile.value === secondTile.value;
 
-    if (direction === "right" || direction === "down") {
-      finalLine = [...finalLine].reverse();
-    }
+      const targetRow =
+        direction === "up"
+          ? targetOffset
+          : direction === "down"
+            ? SIZE - 1 - targetOffset
+            : lineIndex;
+      const targetCol =
+        direction === "left"
+          ? targetOffset
+          : direction === "right"
+            ? SIZE - 1 - targetOffset
+            : lineIndex;
 
-    for (let position = 0; position < SIZE; position++) {
-      if (direction === "left" || direction === "right") {
-        next[index][position] = finalLine[position];
+      if (shouldMerge) {
+        const mergedValue = firstTile.value * 2;
+        next[targetRow][targetCol] = mergedValue;
+        gained += mergedValue;
+
+        tiles.push({
+          id: `${firstTile.row}-${firstTile.col}`,
+          value: firstTile.value,
+          fromRow: firstTile.row,
+          fromCol: firstTile.col,
+          toRow: targetRow,
+          toCol: targetCol,
+          mergeSource: false,
+          mergedTarget: true,
+        });
+        tiles.push({
+          id: `${secondTile.row}-${secondTile.col}`,
+          value: secondTile.value,
+          fromRow: secondTile.row,
+          fromCol: secondTile.col,
+          toRow: targetRow,
+          toCol: targetCol,
+          mergeSource: true,
+          mergedTarget: false,
+        });
+        sourceIndex += 2;
       } else {
-        next[position][index] = finalLine[position];
+        next[targetRow][targetCol] = firstTile.value;
+        tiles.push({
+          id: `${firstTile.row}-${firstTile.col}`,
+          value: firstTile.value,
+          fromRow: firstTile.row,
+          fromCol: firstTile.col,
+          toRow: targetRow,
+          toCol: targetCol,
+          mergeSource: false,
+          mergedTarget: false,
+        });
+        sourceIndex += 1;
       }
+
+      targetOffset += 1;
     }
   }
 
-  return { board: next, gained, changed: !boardsEqual(board, next) };
+  return {
+    board: next,
+    gained,
+    changed: !boardsEqual(board, next),
+    tiles,
+  };
 }
 
 function hasMoves(board: Board): boolean {
@@ -172,28 +279,47 @@ function hasMoves(board: Board): boolean {
 
 export default function NumberMerge() {
   const router = useRouter();
+
   const { width, height } = useWindowDimensions();
 
   const [board, setBoard] = useState<Board>(createEmptyBoard);
+
   const [score, setScore] = useState(0);
+
   const [bestScore, setBestScore] = useState(0);
+
   const [started, setStarted] = useState(false);
+
   const [gameOver, setGameOver] = useState(false);
+  const [mergedCellIds, setMergedCellIds] = useState<string[]>([]);
+  const mergeScale = useRef(new Animated.Value(1)).current;
+  const [motionTiles, setMotionTiles] = useState<
+    (TileMove & { translate: Animated.ValueXY })[]
+  >([]);
+  const isAnimatingRef = useRef(false);
 
   const boardRef = useRef(board);
+
   const scoreRef = useRef(score);
+
   const startedRef = useRef(started);
+
   const gameOverRef = useRef(gameOver);
 
   const compactLayout = height < 740;
+
   const veryCompact = height < 680;
+
   const horizontalPadding = width < 360 ? 10 : 14;
 
   const boardSize = Math.max(
     0,
+
     Math.min(
       width - horizontalPadding * 2,
+
       height * (compactLayout ? 0.39 : 0.43),
+
       440,
     ),
   );
@@ -202,11 +328,13 @@ export default function NumberMerge() {
 
   useEffect(() => {
     AsyncStorage.getItem(BEST_SCORE_KEY)
+
       .then((saved) => {
         if (saved !== null && Number.isFinite(Number(saved))) {
           setBestScore(Number(saved));
         }
       })
+
       .catch(() => {});
   }, []);
 
@@ -243,9 +371,11 @@ export default function NumberMerge() {
 
         await saveGameProgress("number-merge", {
           ...current,
+
           highScore: Math.max(current.highScore, value),
         });
       })
+
       .catch(() => {});
   }, []);
 
@@ -253,50 +383,125 @@ export default function NumberMerge() {
     const newBoard = createBoard();
 
     boardRef.current = newBoard;
+
     scoreRef.current = 0;
+
     startedRef.current = true;
+
     gameOverRef.current = false;
 
     setBoard(newBoard);
+
     setScore(0);
+
     setStarted(true);
+
     setGameOver(false);
   }, []);
 
   const move = useCallback(
     (direction: Direction) => {
-      if (!startedRef.current || gameOverRef.current) return;
+      if (!startedRef.current || gameOverRef.current || isAnimatingRef.current)
+        return;
 
-      const result = moveBoard(boardRef.current, direction);
+      const result = getMovePlan(boardRef.current, direction);
       if (!result.changed) return;
 
-      const nextBoard = addRandomTile(result.board);
-      const nextScore = scoreRef.current + result.gained;
-      const ended = !hasMoves(nextBoard);
+      isAnimatingRef.current = true;
 
-      boardRef.current = nextBoard;
-      scoreRef.current = nextScore;
-      gameOverRef.current = ended;
+      const tileSize = cellSize;
+      const step = tileSize + CELL_GAP;
+      const animatedTiles = result.tiles.map((tile) => ({
+        ...tile,
+        translate: new Animated.ValueXY({ x: 0, y: 0 }),
+      }));
 
-      setBoard(nextBoard);
-      setScore(nextScore);
-      setGameOver(ended);
-      updateBestScore(nextScore);
+      // Render the moving tiles at their source positions before starting native animations.
+      // This prevents tiles from appearing halfway through a swipe on slower devices.
+      setMotionTiles(animatedTiles);
+
+      requestAnimationFrame(() => {
+        const animations = animatedTiles.map((tile) => {
+          const dx = (tile.toCol - tile.fromCol) * step;
+          const dy = (tile.toRow - tile.fromRow) * step;
+          return Animated.timing(tile.translate, {
+            toValue: { x: dx, y: dy },
+            duration: 170,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          });
+        });
+
+        Animated.parallel(animations).start(({ finished }) => {
+          if (!finished) {
+            setMotionTiles([]);
+            isAnimatingRef.current = false;
+            return;
+          }
+
+          // Spawn only after the movement is complete. The base grid always
+          // renders the committed board, while motionTiles is only a temporary
+          // overlay. Clearing the overlay in the same commit as the board update
+          // prevents tiles from disappearing between animation layers.
+          const nextBoard = addRandomTile(result.board);
+          const nextScore = scoreRef.current + result.gained;
+          const ended = !hasMoves(nextBoard);
+
+          boardRef.current = nextBoard;
+          scoreRef.current = nextScore;
+          gameOverRef.current = ended;
+
+          setBoard(nextBoard);
+          setScore(nextScore);
+          setGameOver(ended);
+          setMotionTiles([]);
+          isAnimatingRef.current = false;
+
+          const mergedIds = result.tiles
+            .filter((tile) => tile.mergedTarget)
+            .map((tile) => `${tile.toRow}-${tile.toCol}`);
+
+          if (mergedIds.length > 0) {
+            setMergedCellIds(mergedIds);
+            mergeScale.setValue(0.82);
+            Animated.sequence([
+              Animated.timing(mergeScale, {
+                toValue: 1.12,
+                duration: 85,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+              }),
+              Animated.spring(mergeScale, {
+                toValue: 1,
+                speed: 24,
+                bounciness: 7,
+                useNativeDriver: true,
+              }),
+            ]).start(() => setMergedCellIds([]));
+          }
+
+          updateBestScore(nextScore);
+        });
+      });
     },
-    [updateBestScore],
+    [cellSize, updateBestScore],
   );
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () =>
-          startedRef.current && !gameOverRef.current,
+          startedRef.current && !gameOverRef.current && !isAnimatingRef.current,
+
         onMoveShouldSetPanResponder: (_, gesture) =>
           startedRef.current &&
           !gameOverRef.current &&
+          !isAnimatingRef.current &&
           (Math.abs(gesture.dx) > 12 || Math.abs(gesture.dy) > 12),
+
         onPanResponderRelease: (_, gesture) => {
           const { dx, dy } = gesture;
+
           if (Math.max(Math.abs(dx), Math.abs(dy)) < 25) return;
 
           if (Math.abs(dx) > Math.abs(dy)) {
@@ -306,59 +511,138 @@ export default function NumberMerge() {
           }
         },
       }),
+
     [move],
   );
 
-  const renderBoard = () => (
-    <View
-      style={[styles.board, { width: boardSize, height: boardSize }]}
-      {...panResponder.panHandlers}
-    >
-      {board.map((row, rowIndex) => (
-        <View key={`row-${rowIndex}`} style={styles.boardRow}>
-          {row.map((value, colIndex) => {
-            const tile = getTileStyle(value);
+  const renderBoard = () => {
+    const step = cellSize + CELL_GAP;
+    const visibleTiles = motionTiles;
 
-            return (
-              <View
-                key={`${rowIndex}-${colIndex}`}
+    return (
+      <View
+        style={[styles.board, { width: boardSize, height: boardSize }]}
+        {...panResponder.panHandlers}
+      >
+        {board.map((row, rowIndex) => (
+          <View key={`row-${rowIndex}`} style={styles.boardRow}>
+            {row.map((value, colIndex) => {
+              const tileStyle = getTileStyle(value);
+              return (
+                <View
+                  key={`${rowIndex}-${colIndex}`}
+                  style={[
+                    styles.tileSlot,
+                    { width: cellSize, height: cellSize },
+                  ]}
+                >
+                  {value !== 0 && (
+                    <Animated.View
+                      style={[
+                        styles.baseTile,
+                        {
+                          backgroundColor: tileStyle.backgroundColor,
+                          borderColor: tileStyle.borderColor,
+                          opacity: motionTiles.length > 0 ? 0 : 1,
+                          transform: [
+                            {
+                              scale: mergedCellIds.includes(
+                                `${rowIndex}-${colIndex}`,
+                              )
+                                ? mergeScale
+                                : 1,
+                            },
+                          ],
+                        },
+                      ]}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        style={[
+                          styles.tileNumber,
+                          {
+                            color: tileStyle.color,
+                            fontSize:
+                              value >= 10000
+                                ? 9
+                                : value >= 1000
+                                  ? 11
+                                  : value >= 100
+                                    ? 13
+                                    : 16,
+                          },
+                        ]}
+                      >
+                        {value}
+                      </Text>
+                    </Animated.View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        ))}
+
+        {visibleTiles.map((tile) => {
+          const tileStyle = getTileStyle(tile.value);
+          const left = 6 + tile.fromCol * step;
+          const top = 6 + tile.fromRow * step;
+
+          return (
+            <Animated.View
+              key={tile.id}
+              style={[
+                styles.tile,
+                {
+                  position: "absolute",
+                  left,
+                  top,
+                  width: cellSize,
+                  height: cellSize,
+                  backgroundColor: tileStyle.backgroundColor,
+                  borderColor: tileStyle.borderColor,
+                  zIndex: tile.mergeSource ? 3 : 2,
+                  transform: [
+                    { translateX: tile.translate.x },
+                    { translateY: tile.translate.y },
+                    {
+                      scale: mergedCellIds.includes(
+                        `${tile.toRow}-${tile.toCol}`,
+                      )
+                        ? mergeScale
+                        : 1,
+                    },
+                  ],
+                },
+              ]}
+            >
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
                 style={[
-                  styles.tile,
+                  styles.tileNumber,
                   {
-                    width: cellSize,
-                    height: cellSize,
-                    backgroundColor: tile.backgroundColor,
-                    borderColor: tile.borderColor,
+                    color: tileStyle.color,
+                    fontSize:
+                      tile.value >= 10000
+                        ? 9
+                        : tile.value >= 1000
+                          ? 11
+                          : tile.value >= 100
+                            ? 13
+                            : 16,
                   },
                 ]}
               >
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  style={[
-                    styles.tileNumber,
-                    {
-                      color: tile.color,
-                      fontSize:
-                        value >= 10000
-                          ? 9
-                          : value >= 1000
-                            ? 11
-                            : value >= 100
-                              ? 13
-                              : 16,
-                    },
-                  ]}
-                >
-                  {value === 0 ? "" : value}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      ))}
-    </View>
-  );
+                {tile.value}
+              </Text>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
 
   const renderArrow = (direction: Direction, symbol: string) => (
     <Pressable
@@ -368,7 +652,9 @@ export default function NumberMerge() {
       onPress={() => move(direction)}
       style={({ pressed }) => [
         styles.arrowButton,
+
         pressed && styles.arrowPressed,
+
         (!started || gameOver) && styles.arrowDisabled,
       ]}
     >
@@ -383,9 +669,12 @@ export default function NumberMerge() {
       <View
         style={[
           styles.pageContent,
+
           {
             paddingHorizontal: horizontalPadding,
+
             paddingTop: compactLayout ? 2 : 6,
+
             paddingBottom: compactLayout ? 2 : 6,
           },
         ]}
@@ -397,11 +686,13 @@ export default function NumberMerge() {
               accessibilityLabel="Game information"
               style={[
                 styles.settingsButton,
+
                 veryCompact && styles.settingsButtonCompact,
               ]}
               onPress={() =>
                 Alert.alert(
                   "Number Merge",
+
                   "Merge matching numbers and keep playing until no moves remain.",
                 )
               }
@@ -416,6 +707,7 @@ export default function NumberMerge() {
                 <View
                   style={[
                     styles.readyIcon,
+
                     veryCompact && styles.readyIconCompact,
                   ]}
                 >
@@ -425,6 +717,7 @@ export default function NumberMerge() {
                 <Text
                   style={[
                     styles.readyTitle,
+
                     veryCompact && styles.readyTitleCompact,
                   ]}
                 >
@@ -434,6 +727,7 @@ export default function NumberMerge() {
                 <Text
                   style={[
                     styles.readyDescription,
+
                     veryCompact && styles.readyDescriptionCompact,
                   ]}
                 >
@@ -445,6 +739,7 @@ export default function NumberMerge() {
               <View
                 style={[
                   styles.previewGrid,
+
                   veryCompact && styles.previewGridCompact,
                 ]}
               >
@@ -456,9 +751,12 @@ export default function NumberMerge() {
                       key={value}
                       style={[
                         styles.previewTile,
+
                         veryCompact && styles.previewTileCompact,
+
                         {
                           backgroundColor: tile.backgroundColor,
+
                           borderColor: tile.borderColor,
                         },
                       ]}
@@ -476,6 +774,7 @@ export default function NumberMerge() {
               <Text
                 style={[
                   styles.howToTitle,
+
                   veryCompact && styles.howToTitleCompact,
                 ]}
               >
@@ -485,6 +784,7 @@ export default function NumberMerge() {
               <Text
                 style={[
                   styles.howToDescription,
+
                   veryCompact && styles.howToDescriptionCompact,
                 ]}
               >
@@ -496,30 +796,36 @@ export default function NumberMerge() {
                 <View
                   style={[
                     styles.featureCard,
+
                     veryCompact && styles.featureCardCompact,
                   ]}
                 >
                   <Text style={styles.featureIcon}>▦</Text>
+
                   <Text style={styles.featureText}>36 Boxes</Text>
                 </View>
 
                 <View
                   style={[
                     styles.featureCard,
+
                     veryCompact && styles.featureCardCompact,
                   ]}
                 >
                   <Text style={styles.featureIcon}>∞</Text>
+
                   <Text style={styles.featureText}>Endless</Text>
                 </View>
 
                 <View
                   style={[
                     styles.featureCard,
+
                     veryCompact && styles.featureCardCompact,
                   ]}
                 >
                   <Text style={styles.featureIcon}>🏆</Text>
+
                   <Text style={styles.featureText}>High Score</Text>
                 </View>
               </View>
@@ -529,11 +835,14 @@ export default function NumberMerge() {
                   onPress={startGame}
                   style={({ pressed }) => [
                     styles.startButton,
+
                     veryCompact && styles.startButtonCompact,
+
                     pressed && styles.buttonPressed,
                   ]}
                 >
                   <Text style={styles.startButtonText}>START GAME</Text>
+
                   <Text style={styles.startButtonArrow}>→</Text>
                 </Pressable>
 
@@ -541,7 +850,9 @@ export default function NumberMerge() {
                   onPress={() => router.back()}
                   style={({ pressed }) => [
                     styles.backButton,
+
                     veryCompact && styles.backButtonCompact,
+
                     pressed && styles.buttonPressed,
                   ]}
                 >
@@ -558,6 +869,7 @@ export default function NumberMerge() {
               <View
                 style={[
                   styles.headerIcon,
+
                   compactLayout && styles.headerIconCompact,
                 ]}
               >
@@ -570,6 +882,7 @@ export default function NumberMerge() {
                 >
                   Number Merge
                 </Text>
+
                 <Text style={styles.subtitle}>
                   Merge numbers. Beat your best!
                 </Text>
@@ -581,17 +894,20 @@ export default function NumberMerge() {
             >
               <View style={styles.statCard}>
                 <Text style={styles.statLabel}>SCORE</Text>
+
                 <Text style={styles.statValue}>{score}</Text>
               </View>
 
               <View style={styles.statCard}>
                 <Text style={styles.statLabel}>BEST SCORE</Text>
+
                 <Text style={styles.statValue}>{bestScore}</Text>
               </View>
             </View>
 
             <View style={styles.gameInfoRow}>
               <Text style={styles.gameInfoText}>6 × 6 BOARD</Text>
+
               <Text style={styles.gameInfoText}>ENDLESS MODE</Text>
             </View>
 
@@ -601,7 +917,9 @@ export default function NumberMerge() {
               {gameOver && (
                 <View style={styles.gameOverOverlay}>
                   <Text style={styles.gameOverEmoji}>🎉</Text>
+
                   <Text style={styles.gameOverTitle}>No More Moves!</Text>
+
                   <Text style={styles.gameOverDescription}>
                     Final score: {score}
                   </Text>
@@ -610,7 +928,9 @@ export default function NumberMerge() {
                     onPress={startGame}
                     style={({ pressed }) => [
                       styles.startButton,
+
                       styles.overlayButton,
+
                       pressed && styles.buttonPressed,
                     ]}
                   >
@@ -626,11 +946,15 @@ export default function NumberMerge() {
 
             <View style={styles.controls}>
               <View style={styles.controlSpacer} />
+
               {renderArrow("up", "↑")}
+
               <View style={styles.controlSpacer} />
 
               {renderArrow("left", "←")}
+
               {renderArrow("down", "↓")}
+
               {renderArrow("right", "→")}
             </View>
 
@@ -638,16 +962,21 @@ export default function NumberMerge() {
               onPress={() =>
                 Alert.alert(
                   "Restart game?",
+
                   "Your current game will be lost.",
+
                   [
                     { text: "CANCEL", style: "cancel" },
+
                     { text: "RESTART", onPress: startGame },
                   ],
                 )
               }
               style={({ pressed }) => [
                 styles.restartButton,
+
                 compactLayout && styles.restartButtonCompact,
+
                 pressed && styles.buttonPressed,
               ]}
             >
@@ -667,362 +996,603 @@ export default function NumberMerge() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+
     backgroundColor: "#F0F7EC",
   },
+
   pageContent: {
     flex: 1,
+
     width: "100%",
+
     alignItems: "center",
+
     justifyContent: "space-evenly",
   },
 
   // Ready screen: all content and buttons inside one white card.
+
   readyScreen: {
     flex: 1,
+
     width: "100%",
+
     alignItems: "center",
+
     justifyContent: "center",
+
     paddingHorizontal: 2,
+
     paddingVertical: 4,
   },
+
   settingsButton: {
     position: "absolute",
+
     top: 8,
+
     right: 4,
+
     width: 52,
+
     height: 52,
+
     borderRadius: 28,
+
     backgroundColor: "#1685F8",
+
     borderWidth: 5,
+
     borderColor: "#C7E2FF",
+
     alignItems: "center",
+
     justifyContent: "center",
+
     zIndex: 2,
   },
+
   settingsButtonCompact: {
     width: 44,
+
     height: 44,
   },
+
   settingsText: {
     fontSize: 24,
+
     color: "#FFFFFF",
   },
+
   readyCard: {
     width: "100%",
+
     maxWidth: 460,
+
     backgroundColor: "#FFFFFF",
+
     borderRadius: 32,
+
     paddingHorizontal: 20,
+
     paddingVertical: 20,
+
     alignItems: "center",
+
     borderWidth: 1,
+
     borderColor: "#E2EBDD",
+
     elevation: 6,
+
     shadowColor: "#38543A",
+
     shadowOffset: { width: 0, height: 6 },
+
     shadowOpacity: 0.16,
+
     shadowRadius: 9,
   },
+
   readyCardCompact: {
     borderRadius: 24,
+
     paddingHorizontal: 12,
+
     paddingVertical: 10,
   },
+
   readyHeader: {
     width: "100%",
+
     alignItems: "center",
+
     marginBottom: 15,
+
     paddingTop: 3,
   },
+
   readyIcon: {
     width: 64,
+
     height: 64,
+
     borderRadius: 22,
+
     backgroundColor: "#DFF7D8",
+
     borderWidth: 1,
+
     borderColor: "#CDEBC5",
+
     alignItems: "center",
+
     justifyContent: "center",
+
     marginBottom: 9,
   },
+
   readyIconCompact: {
     width: 48,
+
     height: 48,
+
     borderRadius: 17,
+
     marginBottom: 5,
   },
+
   readyIconText: {
     fontSize: 34,
   },
+
   readyTitle: {
     color: "#273D2B",
+
     fontSize: 27,
+
     fontWeight: "900",
+
     textAlign: "center",
+
     marginBottom: 8,
   },
+
   readyTitleCompact: {
     fontSize: 22,
+
     marginBottom: 4,
   },
+
   readyDescription: {
     color: "#7B8479",
+
     fontSize: 14,
+
     lineHeight: 20,
+
     textAlign: "center",
   },
+
   readyDescriptionCompact: {
     fontSize: 11,
+
     lineHeight: 15,
   },
+
   previewGrid: {
     width: 174,
+
     flexDirection: "row",
+
     flexWrap: "wrap",
+
     justifyContent: "center",
+
     gap: 4,
+
     marginBottom: 15,
   },
+
   previewGridCompact: {
     width: 159,
+
     gap: 3,
+
     marginBottom: 8,
   },
+
   previewTile: {
     width: 54,
+
     height: 44,
+
     borderRadius: 10,
+
     borderWidth: 2,
+
     alignItems: "center",
+
     justifyContent: "center",
   },
+
   previewTileCompact: {
     width: 51,
+
     height: 35,
+
     borderRadius: 8,
   },
+
   previewNumber: {
     fontSize: 15,
+
     fontWeight: "900",
   },
+
   howToTitle: {
     color: "#2B452D",
+
     fontSize: 21,
+
     fontWeight: "900",
+
     textAlign: "center",
+
     marginBottom: 8,
   },
+
   howToTitleCompact: {
     fontSize: 17,
+
     marginBottom: 4,
   },
+
   howToDescription: {
     color: "#7B8479",
+
     fontSize: 13,
+
     lineHeight: 19,
+
     textAlign: "center",
+
     marginBottom: 15,
   },
+
   howToDescriptionCompact: {
     fontSize: 10,
+
     lineHeight: 14,
+
     marginBottom: 8,
   },
+
   featureRow: {
     width: "100%",
+
     flexDirection: "row",
+
     justifyContent: "space-between",
+
     gap: 7,
+
     marginBottom: 18,
   },
+
   featureCard: {
     flex: 1,
+
     minHeight: 76,
+
     borderRadius: 15,
+
     backgroundColor: "#E8F6E4",
+
     alignItems: "center",
+
     justifyContent: "center",
+
     paddingHorizontal: 2,
+
     paddingVertical: 7,
   },
+
   featureCardCompact: {
     minHeight: 52,
+
     borderRadius: 11,
+
     paddingVertical: 4,
   },
+
   featureIcon: {
     color: "#527451",
+
     fontSize: 22,
+
     fontWeight: "900",
+
     marginBottom: 4,
   },
+
   featureText: {
     color: "#4C704A",
+
     fontSize: 10,
+
     fontWeight: "900",
+
     textAlign: "center",
   },
+
   readyButtons: {
     width: "100%",
+
     gap: 9,
   },
+
   startButton: {
     width: "100%",
+
     height: 54,
+
     borderRadius: 19,
+
     backgroundColor: "#16A34A",
+
     alignItems: "center",
+
     justifyContent: "center",
+
     position: "relative",
   },
+
   startButtonCompact: {
     height: 43,
+
     borderRadius: 14,
   },
+
   startButtonText: {
     color: "#FFFFFF",
+
     fontSize: 15,
+
     fontWeight: "900",
+
     letterSpacing: 1,
   },
+
   startButtonArrow: {
     color: "#FFFFFF",
+
     fontSize: 23,
+
     fontWeight: "900",
+
     position: "absolute",
+
     right: 18,
   },
+
   backButton: {
     width: "100%",
+
     height: 48,
+
     borderRadius: 18,
+
     backgroundColor: "#F3F7EC",
+
     borderWidth: 1,
+
     borderColor: "#DFE7D9",
+
     alignItems: "center",
+
     justifyContent: "center",
   },
+
   backButtonCompact: {
     height: 38,
+
     borderRadius: 13,
   },
+
   backButtonText: {
     color: "#219653",
+
     fontSize: 13,
+
     fontWeight: "900",
+
     letterSpacing: 0.5,
   },
+
   buttonPressed: {
     opacity: 0.8,
+
     transform: [{ scale: 0.99 }],
   },
 
   // Gameplay screen.
+
   header: {
     width: "100%",
+
     flexDirection: "row",
+
     alignItems: "center",
+
     marginBottom: 6,
   },
+
   headerCompact: {
     marginBottom: 1,
   },
+
   headerIcon: {
     width: 48,
+
     height: 48,
+
     borderRadius: 15,
+
     backgroundColor: "#DFF7D8",
+
     justifyContent: "center",
+
     alignItems: "center",
+
     marginRight: 10,
   },
+
   headerIconCompact: {
     width: 40,
+
     height: 40,
+
     borderRadius: 12,
   },
+
   headerIconText: {
     fontSize: 25,
   },
+
   headerText: {
     flex: 1,
   },
+
   title: {
     fontSize: 23,
+
     fontWeight: "900",
+
     color: "#273D2B",
   },
+
   titleCompact: {
     fontSize: 20,
   },
+
   subtitle: {
     fontSize: 11,
+
     color: "#73816E",
+
     marginTop: 2,
   },
+
   statsRow: {
     flexDirection: "row",
+
     width: "100%",
+
     gap: 10,
+
     marginBottom: 6,
   },
+
   statsRowCompact: {
     marginBottom: 2,
   },
+
   statCard: {
     flex: 1,
+
     backgroundColor: "#FFFFFF",
+
     borderRadius: 13,
+
     paddingVertical: 7,
+
     paddingHorizontal: 10,
+
     borderWidth: 1,
+
     borderColor: "#E5EBDD",
+
     alignItems: "center",
   },
+
   statLabel: {
     color: "#82907B",
+
     fontSize: 9,
+
     fontWeight: "800",
+
     letterSpacing: 1,
   },
+
   statValue: {
     color: "#2B452D",
+
     fontSize: 20,
+
     fontWeight: "900",
+
     marginTop: 1,
   },
+
   gameInfoRow: {
     width: "100%",
+
     flexDirection: "row",
+
     justifyContent: "space-between",
+
     marginBottom: 4,
   },
+
   gameInfoText: {
     fontSize: 9,
+
     fontWeight: "900",
+
     letterSpacing: 0.5,
+
     color: "#73816E",
   },
+
   boardWrapper: {
     alignItems: "center",
+
     justifyContent: "center",
+
     position: "relative",
   },
+
   board: {
     backgroundColor: "#B8C7B0",
+
     padding: 6,
+
     borderRadius: 13,
+
     gap: CELL_GAP,
+
     overflow: "hidden",
   },
+
   boardRow: {
     flex: 1,
+
     flexDirection: "row",
+
     gap: CELL_GAP,
   },
-  tile: {
+
+  tileSlot: {
     flex: 1,
     minWidth: 0,
+    borderRadius: 6,
+    backgroundColor: "#DCE4D7",
+  },
+  baseTile: {
+    width: "100%",
+    height: "100%",
     borderRadius: 6,
     borderWidth: 1.5,
     borderBottomWidth: 3,
@@ -1030,107 +1600,190 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     elevation: 1,
   },
-  tileNumber: {
-    fontWeight: "900",
-    textAlign: "center",
-    includeFontPadding: false,
-  },
-  instruction: {
-    fontSize: 11,
-    color: "#74816F",
-    marginTop: 3,
-    marginBottom: 3,
-    textAlign: "center",
-  },
-  controls: {
-    width: 160,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    gap: 5,
-  },
-  controlSpacer: {
-    width: 48,
-    height: 39,
-  },
-  arrowButton: {
-    width: 48,
-    height: 39,
-    borderRadius: 11,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE6D5",
-    justifyContent: "center",
+  tile: {
+    borderRadius: 6,
+
+    borderWidth: 1.5,
+
+    borderBottomWidth: 3,
+
     alignItems: "center",
+
+    justifyContent: "center",
+
     elevation: 1,
   },
+
+  tileNumber: {
+    fontWeight: "900",
+
+    textAlign: "center",
+
+    includeFontPadding: false,
+  },
+
+  instruction: {
+    fontSize: 11,
+
+    color: "#74816F",
+
+    marginTop: 3,
+
+    marginBottom: 3,
+
+    textAlign: "center",
+  },
+
+  controls: {
+    width: 160,
+
+    flexDirection: "row",
+
+    flexWrap: "wrap",
+
+    justifyContent: "center",
+
+    gap: 5,
+  },
+
+  controlSpacer: {
+    width: 48,
+
+    height: 39,
+  },
+
+  arrowButton: {
+    width: 48,
+
+    height: 39,
+
+    borderRadius: 11,
+
+    backgroundColor: "#FFFFFF",
+
+    borderWidth: 1,
+
+    borderColor: "#DCE6D5",
+
+    justifyContent: "center",
+
+    alignItems: "center",
+
+    elevation: 1,
+  },
+
   arrowPressed: {
     backgroundColor: "#DFF7D8",
+
     transform: [{ scale: 0.94 }],
   },
+
   arrowDisabled: {
     opacity: 0.45,
   },
+
   arrowText: {
     fontSize: 23,
+
     fontWeight: "900",
+
     color: "#38563A",
+
     lineHeight: 29,
   },
+
   restartButton: {
     marginTop: 5,
+
     width: "100%",
+
     backgroundColor: "#FFFFFF",
+
     borderWidth: 1,
+
     borderColor: "#E0E8D9",
+
     borderRadius: 12,
+
     paddingVertical: 9,
+
     alignItems: "center",
   },
+
   restartButtonCompact: {
     marginTop: 2,
+
     paddingVertical: 7,
   },
+
   restartButtonText: {
     color: "#496448",
+
     fontSize: 12,
+
     fontWeight: "900",
   },
+
   gameFooter: {
     color: "#82907B",
+
     fontSize: 10,
+
     textAlign: "center",
+
     marginTop: 3,
   },
+
   gameOverOverlay: {
     position: "absolute",
+
     top: 0,
+
     right: 0,
+
     bottom: 0,
+
     left: 0,
+
     borderRadius: 13,
+
     backgroundColor: "rgba(243,248,238,0.95)",
+
     alignItems: "center",
+
     justifyContent: "center",
+
     padding: 16,
   },
+
   gameOverEmoji: {
     fontSize: 34,
+
     marginBottom: 5,
   },
+
   gameOverTitle: {
     color: "#2B452D",
+
     fontSize: 22,
+
     fontWeight: "900",
+
     textAlign: "center",
   },
+
   gameOverDescription: {
     color: "#73816E",
+
     fontSize: 14,
+
     fontWeight: "700",
+
     marginTop: 7,
+
     marginBottom: 15,
   },
+
   overlayButton: {
     maxWidth: 220,
   },

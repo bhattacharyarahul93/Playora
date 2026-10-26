@@ -1,10 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Animated,
+  Easing,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { useRouter } from "expo-router";
 
 import { Chess } from "chess.js";
+
 import { getAllProgress, saveGameProgress } from "../../src/services/storage";
 
 import {
@@ -70,7 +78,7 @@ export default function ChessScreen() {
 
   const [score, setScore] = useState(0);
 
-  const [bestScore, setBestScore] = useState(0);
+  const [, setBestScore] = useState(0);
 
   const [wins, setWins] = useState(0);
 
@@ -81,14 +89,26 @@ export default function ChessScreen() {
   const [resultText, setResultText] = useState("");
 
   const [boardVersion, setBoardVersion] = useState(0);
+  const [boardSize, setBoardSize] = useState(0);
+  const [animatedMove, setAnimatedMove] = useState<{
+    from: string;
+    to: string;
+    color: "w" | "b";
+    piece: string;
+  } | null>(null);
+  const pieceTranslation = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const pieceAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     let mounted = true;
+
     getAllProgress()
       .then((allProgress) => {
         if (mounted) setBestScore(allProgress.chess.highScore);
       })
+
       .catch((error) => console.warn("Unable to load Chess progress:", error));
+
     return () => {
       mounted = false;
     };
@@ -117,29 +137,40 @@ export default function ChessScreen() {
 
     const nextRound = roundNumber + 1;
 
-    const nextDifficulty = DIFFICULTIES[(nextRound - 1) % DIFFICULTIES.length];
-
     /*
 
-     * Alternate colors.
 
-     *
 
-     * Round 1 = White
+         * Alternate colors.
 
-     * Round 2 = Black
 
-     * Round 3 = White
 
-     */
+         *
+
+
+
+         * Round 1 = White
+
+
+
+         * Round 2 = Black
+
+
+
+         * Round 3 = White
+
+
+
+         */
 
     const nextColor: PlayerColor = nextRound % 2 === 1 ? "w" : "b";
 
+    pieceAnimationRef.current?.stop();
+    setAnimatedMove(null);
+    pieceTranslation.setValue({ x: 0, y: 0 });
     chessRef.current = new Chess();
 
     setRoundNumber(nextRound);
-
-    setDifficulty(nextDifficulty);
 
     setPlayerColor(nextColor);
 
@@ -157,13 +188,21 @@ export default function ChessScreen() {
 
     /*
 
-     * If player is Black,
 
-     * computer has White and
 
-     * therefore starts.
+         * If player is Black,
 
-     */
+
+
+         * computer has White and
+
+
+
+         * therefore starts.
+
+
+
+         */
 
     setComputerThinking(nextColor === "b");
 
@@ -179,6 +218,9 @@ export default function ChessScreen() {
       clearTimeout(resultTimerRef.current);
     }
 
+    pieceAnimationRef.current?.stop();
+    setAnimatedMove(null);
+    pieceTranslation.setValue({ x: 0, y: 0 });
     chessRef.current = new Chess();
 
     setGameState("ready");
@@ -213,16 +255,22 @@ export default function ChessScreen() {
   const finishGame = useCallback(
     (result: string) => {
       setResultText(result);
+
       setGameState("completed");
+
       setComputerThinking(false);
 
       const playerWon = result === "YOU WIN! 🏆";
+
       const isDraw = result === "DRAW! 🤝";
+
       const nextScore = score + (playerWon ? 100 : 0);
+
       setBestScore((value) => Math.max(value, nextScore));
 
       if (playerWon) {
         setWins((value) => value + 1);
+
         setScore(nextScore);
       } else if (isDraw) {
         setDraws((value) => value + 1);
@@ -233,22 +281,31 @@ export default function ChessScreen() {
       getAllProgress()
         .then(async (allProgress) => {
           const previous = allProgress.chess;
+
           const earnedStars = playerWon ? 3 : isDraw ? 1 : 0;
+
           await saveGameProgress("chess", {
             ...previous,
+
             highScore: Math.max(previous.highScore, nextScore),
+
             currentLevel: previous.currentLevel + 1,
+
             unlockedLevels: Math.max(
               previous.unlockedLevels,
+
               previous.currentLevel + 2,
             ),
+
             stars: Math.max(previous.stars, earnedStars),
           });
         })
+
         .catch((error) => {
           console.warn("Unable to save Chess progress:", error);
         });
     },
+
     [score],
   );
 
@@ -261,11 +318,17 @@ export default function ChessScreen() {
 
     /*
 
-     * Delay the result screen so
 
-     * the final move is visible.
 
-     */
+         * Delay the result screen so
+
+
+
+         * the final move is visible.
+
+
+
+         */
 
     resultTimerRef.current = setTimeout(() => {
       finishGame(result);
@@ -273,6 +336,53 @@ export default function ChessScreen() {
 
     return true;
   }, [playerColor, finishGame]);
+
+  const animatePieceMove = useCallback(
+    (from: string, to: string, color: "w" | "b", piece: string) => {
+      const boardFiles: string[] = [...getBoardFiles(playerColor)];
+      const boardRanks = getBoardRanks(playerColor);
+      const fromColumn = boardFiles.indexOf(from.charAt(0));
+      const toColumn = boardFiles.indexOf(to.charAt(0));
+
+      const fromRow = boardRanks.findIndex(
+        (rank) => String(rank) === from.charAt(1),
+      );
+
+      const toRow = boardRanks.findIndex(
+        (rank) => String(rank) === to.charAt(1),
+      );
+
+      if (
+        boardSize <= 0 ||
+        fromColumn < 0 ||
+        toColumn < 0 ||
+        fromRow < 0 ||
+        toRow < 0
+      ) {
+        setAnimatedMove(null);
+        return;
+      }
+
+      pieceAnimationRef.current?.stop();
+      pieceTranslation.setValue({ x: 0, y: 0 });
+      setAnimatedMove({ from, to, color, piece });
+
+      const cellSize = (boardSize - 8) / 8;
+      pieceAnimationRef.current = Animated.timing(pieceTranslation, {
+        toValue: {
+          x: (toColumn - fromColumn) * cellSize,
+          y: (toRow - fromRow) * cellSize,
+        },
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      });
+      pieceAnimationRef.current.start(({ finished }) => {
+        if (finished) setAnimatedMove(null);
+      });
+    },
+    [boardSize, playerColor, pieceTranslation],
+  );
 
   const performMove = useCallback(
     (from: string, to: string, promotion = "q") => {
@@ -284,9 +394,9 @@ export default function ChessScreen() {
         return false;
       }
 
+      animatePieceMove(move.from, move.to, move.color, move.piece);
       setLastMove({
         from: move.from,
-
         to: move.to,
       });
 
@@ -299,7 +409,7 @@ export default function ChessScreen() {
       return true;
     },
 
-    [clearSelection, refreshBoard, checkFinished],
+    [clearSelection, refreshBoard, checkFinished, animatePieceMove],
   );
 
   const handleSquarePress = useCallback(
@@ -326,9 +436,13 @@ export default function ChessScreen() {
 
       /*
 
-       * Nothing selected.
 
-       */
+
+         * Nothing selected.
+
+
+
+         */
 
       if (!selectedSquare) {
         if (piece && piece.color === playerColor) {
@@ -342,11 +456,17 @@ export default function ChessScreen() {
 
       /*
 
-       * Tap selected piece
 
-       * again.
 
-       */
+         * Tap selected piece
+
+
+
+         * again.
+
+
+
+         */
 
       if (selectedSquare === square) {
         clearSelection();
@@ -356,11 +476,17 @@ export default function ChessScreen() {
 
       /*
 
-       * Select another own
 
-       * piece.
 
-       */
+         * Select another own
+
+
+
+         * piece.
+
+
+
+         */
 
       if (piece && piece.color === playerColor) {
         setSelectedSquare(square);
@@ -372,9 +498,13 @@ export default function ChessScreen() {
 
       /*
 
-       * Not a legal destination.
 
-       */
+
+         * Not a legal destination.
+
+
+
+         */
 
       if (!legalMoves.includes(square)) {
         clearSelection();
@@ -384,9 +514,13 @@ export default function ChessScreen() {
 
       /*
 
-       * Promotion.
 
-       */
+
+         * Promotion.
+
+
+
+         */
 
       if (isPawnPromotion(chess, selectedSquare as any, square as any)) {
         setPromotionSquare(square);
@@ -440,9 +574,13 @@ export default function ChessScreen() {
 
   /*
 
-   * COMPUTER TURN
 
-   */
+
+     * COMPUTER TURN
+
+
+
+     */
 
   useEffect(() => {
     if (gameState !== "playing" || !computerThinking || promotionSquare) {
@@ -480,9 +618,9 @@ export default function ChessScreen() {
         return;
       }
 
+      animatePieceMove(result.from, result.to, result.color, result.piece);
       setLastMove({
         from: result.from,
-
         to: result.to,
       });
 
@@ -526,6 +664,7 @@ export default function ChessScreen() {
     finishGame,
 
     boardVersion,
+    animatePieceMove,
   ]);
 
   const files = getBoardFiles(playerColor);
@@ -534,9 +673,13 @@ export default function ChessScreen() {
 
   /*
 
-   * READY
 
-   */
+
+     * READY
+
+
+
+     */
 
   if (gameState === "ready") {
     return (
@@ -560,8 +703,70 @@ export default function ChessScreen() {
 
             <Text style={styles.readyRule}>🔄 White ↔ Black every round</Text>
 
-            <Text style={styles.readyRule}>🤖 Easy → Medium → Hard</Text>
+            <Text style={styles.readyRule}>
+              🤖 Choose your opponent's difficulty below
+            </Text>
           </View>
+
+          <Text style={styles.difficultyHeading}>CHOOSE DIFFICULTY</Text>
+
+          <View style={styles.difficultySelector}>
+            {DIFFICULTIES.map((level) => {
+              const selected = difficulty === level;
+
+              return (
+                <Pressable
+                  key={level}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => setDifficulty(level)}
+                  style={({ pressed }) => [
+                    styles.difficultyOption,
+
+                    selected && styles.difficultyOptionSelected,
+
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.difficultyOptionTitle,
+
+                      selected && styles.difficultyOptionTitleSelected,
+                    ]}
+                  >
+                    {level === "EASY"
+                      ? "🟢 EASY"
+                      : level === "MEDIUM"
+                        ? "🟡 MEDIUM"
+                        : "🔴 HARD"}
+                  </Text>
+
+                  <Text
+                    style={[
+                      styles.difficultyOptionDescription,
+
+                      selected && styles.difficultyOptionDescriptionSelected,
+                    ]}
+                  >
+                    {level === "EASY"
+                      ? "Relaxed"
+                      : level === "MEDIUM"
+                        ? "Balanced"
+                        : "Expert"}
+                  </Text>
+
+                  {selected && (
+                    <Text style={styles.selectedLabel}>✓ SELECTED</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.selectedDifficultyInfo}>
+            {getDifficultyDescription(difficulty)}
+          </Text>
 
           <Pressable
             style={({ pressed }) => [
@@ -587,9 +792,13 @@ export default function ChessScreen() {
 
   /*
 
-   * COMPLETED
 
-   */
+
+     * COMPLETED
+
+
+
+     */
 
   if (gameState === "completed") {
     return (
@@ -618,6 +827,64 @@ export default function ChessScreen() {
             </Text>
           </View>
 
+          <Text style={styles.difficultyHeading}>
+            PLAY AGAIN — CHOOSE DIFFICULTY
+          </Text>
+
+          <View style={styles.difficultySelector}>
+            {DIFFICULTIES.map((level) => {
+              const selected = difficulty === level;
+
+              return (
+                <Pressable
+                  key={level}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => setDifficulty(level)}
+                  style={({ pressed }) => [
+                    styles.difficultyOption,
+
+                    selected && styles.difficultyOptionSelected,
+
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.difficultyOptionTitle,
+
+                      selected && styles.difficultyOptionTitleSelected,
+                    ]}
+                  >
+                    {level === "EASY"
+                      ? "🟢 EASY"
+                      : level === "MEDIUM"
+                        ? "🟡 MEDIUM"
+                        : "🔴 HARD"}
+                  </Text>
+
+                  <Text
+                    style={[
+                      styles.difficultyOptionDescription,
+
+                      selected && styles.difficultyOptionDescriptionSelected,
+                    ]}
+                  >
+                    {level === "EASY"
+                      ? "Relaxed"
+                      : level === "MEDIUM"
+                        ? "Balanced"
+                        : "Expert"}
+                  </Text>
+
+                  {selected && (
+                    <Text style={styles.selectedLabel}>✓ SELECTED</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+
           <Pressable
             style={({ pressed }) => [
               styles.startButton,
@@ -642,9 +909,13 @@ export default function ChessScreen() {
 
   /*
 
-   * PLAYING
 
-   */
+
+     * PLAYING
+
+
+
+     */
 
   return (
     <View style={styles.gameScreen}>
@@ -695,7 +966,10 @@ export default function ChessScreen() {
       </View>
 
       <View style={styles.boardWrapper}>
-        <View style={styles.board}>
+        <View
+          style={styles.board}
+          onLayout={(event) => setBoardSize(event.nativeEvent.layout.width)}
+        >
           {ranks.map((rank, rankIndex) =>
             files.map((file, fileIndex) => {
               const square = `${file}${rank}`;
@@ -731,7 +1005,7 @@ export default function ChessScreen() {
                   ]}
                   onPress={() => handleSquarePress(square)}
                 >
-                  {piece && (
+                  {piece && animatedMove?.to !== square && (
                     <Text
                       style={[
                         styles.pieceText,
@@ -760,6 +1034,46 @@ export default function ChessScreen() {
               );
             }),
           )}
+          {animatedMove &&
+            boardSize > 0 &&
+            (() => {
+              const boardFiles = getBoardFiles(playerColor);
+              const boardRanks = getBoardRanks(playerColor);
+              const column = boardFiles.findIndex(
+                (file) => String(file) === animatedMove.from.charAt(0),
+              );
+              const row = boardRanks.findIndex(
+                (rank) => String(rank) === animatedMove.from.charAt(1),
+              );
+              const cellSize = (boardSize - 8) / 8;
+              if (column < 0 || row < 0) return null;
+              return (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.animatedPieceCell,
+                    {
+                      width: cellSize,
+                      height: cellSize,
+                      left: column * cellSize,
+                      top: row * cellSize,
+                      transform: pieceTranslation.getTranslateTransform(),
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.pieceText,
+                      animatedMove.color === "w"
+                        ? styles.whitePiece
+                        : styles.blackPiece,
+                    ]}
+                  >
+                    {getPieceSymbol(animatedMove.color, animatedMove.piece)}
+                  </Text>
+                </Animated.View>
+              );
+            })()}
         </View>
       </View>
 
@@ -899,6 +1213,108 @@ const styles = StyleSheet.create({
     fontWeight: "700",
 
     marginVertical: 4,
+  },
+
+  difficultyHeading: {
+    width: "100%",
+
+    textAlign: "center",
+
+    marginTop: 16,
+
+    marginBottom: 9,
+
+    fontSize: 12,
+
+    fontWeight: "900",
+
+    color: "#18242D",
+
+    letterSpacing: 0.7,
+  },
+
+  difficultySelector: {
+    width: "100%",
+
+    flexDirection: "row",
+
+    gap: 7,
+  },
+
+  difficultyOption: {
+    flex: 1,
+
+    minHeight: 76,
+
+    paddingVertical: 10,
+
+    paddingHorizontal: 4,
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    borderWidth: 2,
+
+    borderColor: "#E1E8E0",
+
+    borderRadius: 12,
+
+    backgroundColor: "#FFFFFF",
+  },
+
+  difficultyOptionSelected: {
+    borderColor: "#E85D04",
+
+    backgroundColor: "#FFF1E7",
+  },
+
+  difficultyOptionTitle: {
+    fontSize: 11,
+
+    fontWeight: "900",
+
+    color: "#34434D",
+
+    textAlign: "center",
+  },
+
+  difficultyOptionTitleSelected: {
+    color: "#E85D04",
+  },
+
+  difficultyOptionDescription: {
+    fontSize: 10,
+
+    color: "#7A8790",
+
+    marginTop: 4,
+
+    textAlign: "center",
+  },
+
+  difficultyOptionDescriptionSelected: {
+    color: "#8C481D",
+  },
+
+  selectedLabel: {
+    fontSize: 8,
+
+    fontWeight: "900",
+
+    color: "#E85D04",
+
+    marginTop: 4,
+  },
+
+  selectedDifficultyInfo: {
+    fontSize: 10,
+
+    color: "#53635A",
+
+    textAlign: "center",
+
+    marginTop: 7,
   },
 
   startButton: {
@@ -1201,6 +1617,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#E85D5D",
   },
 
+  animatedPieceCell: {
+    position: "absolute",
+    zIndex: 20,
+    elevation: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   pieceText: {
     fontSize: 33,
 
